@@ -41,20 +41,49 @@ jobs:
         run: |
           workspace=$(pwd)
           mkdir ${{ env.REDIS_DIST }}-msys2
+          
+          # 修复 dlfcn.h 问题（MSYS2 常见）
           sed -i 's/__GNU_VISIBLE/1/' /usr/include/dlfcn.h
+          
+          # 下载的压缩包名
+          echo "解压 redis-${{ env.RELEASE_VERSION }}.tar.gz"
           tar -xzf redis-${{ env.RELEASE_VERSION }}.tar.gz
-          cd redis-${{ env.RELEASE_VERSION }}/src && ./mkreleasehdr.sh
+          
+          # 定义源码目录变量（关键！统一使用这个变量，避免硬编码）
+          SRC_DIR="redis-${{ env.RELEASE_VERSION }}"
+          
+          # 检查目录是否真的解压出来了
+          if [ ! -d "$SRC_DIR" ]; then
+            echo "错误：解压失败，目录 $SRC_DIR 不存在！"
+            ls -la
+            exit 1
+          fi
+          
+          # Windows 下路径兼容补丁
+          sed -i 's/server\.configfile = getAbsolutePath(argv\[1\]);/server.configfile = zstrdup(argv[1]);/' $SRC_DIR/src/server.c
+          
+          # 进入 src 目录执行版本头生成和修改 logo
+          cd $SRC_DIR/src
+          ./mkreleasehdr.sh
           sed -i 's/\"\;/\"/' asciilogo.h
-          echo '" Redis for Windows Project Home \n"' >> asciilogo.h
-          echo '" https://github.com/redis-windows/redis-windows  \n\n";' >> asciilogo.h
-          cd ..
+          echo '" SD.Zhongfu/Redis For Windows  \n\n";' >> asciilogo.h
+          
+          # 在 src 目录直接编译（关键：避免在根目录 make）
           make BUILD_TLS=yes CFLAGS="-Wno-char-subscripts -O0"
-          find . -mindepth 1 -maxdepth 2 -type f -regex '.*\(\.exe\|\.conf\)' -exec cp -f "{}" "$workspace/${{ env.REDIS_DIST }}-msys2" \;
+          
+          # 从 src 向上复制所有 exe、conf、dll 到打包目录
+          find ../ -mindepth 1 -maxdepth 3 -type f -regex '.*\(\.exe\|\.conf\|\.dll\)' -exec cp -f "{}" "$workspace/${{ env.REDIS_DIST }}-msys2" \;
+          
+          # 回到 workspace 复制其他文件
           cd $workspace
-          cp README.md README.zh_CN.md start.bat /usr/bin/msys-2.0.dll /usr/bin/msys-crypto-3.dll /usr/bin/msys-ssl-3.dll ${{ env.REDIS_DIST }}-msys2
+          cp README.md README.zh_CN.md start.bat /usr/bin/msys-2.0.dll /usr/bin/msys-gcc_s-seh-1.dll /usr/bin/msys-stdc++-6.dll /usr/bin/msys-crypto-3.dll /usr/bin/msys-ssl-3.dll ${{ env.REDIS_DIST }}-msys2
           sed -i 's/pidfile \/var\/run/pidfile ./' ${{ env.REDIS_DIST }}-msys2/redis.conf
+          
+          # 打包纯净版
           zip -q -r ${{ env.REDIS_DIST }}-msys2.zip ${{ env.REDIS_DIST }}-msys2
-          cp install_redis_service.bat uninstall_redis_service.bat publish/* ${{ env.REDIS_DIST }}-msys2
+          
+          # 带服务版
+          cp install_redis_service.bat uninstall_redis_service.bat publish/* ${{ env.REDIS_DIST }}-msys2/ 2>/dev/null || true
           mv ${{ env.REDIS_DIST }}-msys2 ${{ env.REDIS_DIST }}-msys2-with-Service
           zip -q -r ${{ env.REDIS_DIST }}-msys2-with-Service.zip ${{ env.REDIS_DIST }}-msys2-with-Service
         shell: msys2 {0}
